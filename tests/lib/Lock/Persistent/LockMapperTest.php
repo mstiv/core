@@ -45,6 +45,8 @@ class LockMapperTest extends TestCase {
 	private $mapper;
 	/** @var Lock[] */
 	private $locks = [];
+	/** @var string */
+	private $path;
 
 	public function setUp() {
 		parent::setUp();
@@ -149,5 +151,53 @@ class LockMapperTest extends TestCase {
 		$this->assertEquals($expected->getToken(), $actual->getToken());
 		$this->assertEquals($expected->getCreatedAt(), $actual->getCreatedAt());
 		$this->assertEquals($expected->getTimeout(), $actual->getTimeout());
+	}
+
+	public function testCleanup() {
+		$lock = new Lock();
+		$lock->setFileId($this->fileCacheId);
+		$lock->setCreatedAt(0);
+		$lock->setTimeout(1880);
+		$lock->setScope(ILock::LOCK_SCOPE_EXCLUSIVE);
+		$lock->setDepth(0);
+
+		// create 2 out dated locks
+		$token0 = \uniqid('tok', true);
+		$lock->setToken($token0);
+		$this->mapper->insert($lock);
+
+		$token1 = \uniqid('tok', true);
+		$lock->setToken($token1);
+		$lock->setId(null);
+		$this->mapper->insert($lock);
+
+		// and one lock which is current
+		$token2 = \uniqid('tok.2', true);
+		$lock->setToken($token2);
+		$lock->setId(null);
+		$lock->setCreatedAt(\time());
+		$this->mapper->insert($lock);
+		$this->locks[]= $lock;
+
+		$this->lockExists($token0);
+		$this->lockExists($token1);
+		$this->lockExists($token2);
+
+		$this->mapper->cleanup();
+
+		$this->lockExists($token0, false);
+		$this->lockExists($token1, false);
+		$this->lockExists($token2);
+	}
+
+	private function lockExists($token0, $exists = true) {
+		$qb = $this->db->getQueryBuilder();
+		$result = $qb->select($qb->createFunction('count(*) as `count`'))
+			->from($this->mapper->getTableName())
+			->where($qb->expr()->eq('token', $qb->createNamedParameter($token0)))
+			->execute()
+			->fetch();
+
+		$this->assertEquals($exists ? 1 : 0, (int) $result['count']);
 	}
 }
